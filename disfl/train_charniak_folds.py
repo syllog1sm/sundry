@@ -67,24 +67,41 @@ def train_parser(bllip_loc, fold_dir):
                    str(fold_dir.join('train.mrg')),
                    str(fold_dir.join('heldout.mrg')))
 
-def get_nbests(raw_text):
-    nbest_re = re.compile(r'\nN=\d+\t')
-    for raw_nbest in nbest_re.split(raw_text):
-        nbest = []
-        for raw_sent in raw_nbest.split('\n')[1:]:
-            raw_words = raw_sent.split()[7:]
-            words = [w for (i, w) in enumerate(raw_words)[:-1] if raw_words[i + 1] == '_']
-            nbest.append('<s> ' + ' '.join(words) + '</s>')
-            yield '\n'.join(nbest)
+def get_sent_strs(raw_nbest):
+    nbest = []
+    # Suppress gold sent
+    for raw_sent in raw_nbest.split('\n')[1:]:
+        raw_words = raw_sent.split()[7:]
+        words = [w for (i, w) in enumerate(raw_words)[:-1] if raw_words[i + 1] == '_']
+        nbest.append('<s> ' + ' '.join(words) + ' </s>')
+    return '\n'.join(nbest)
 
 
 def parse_test(fold_dir):
-    for nbest in get_nbests(fold_dir.join('test-strings.txt').open().read()):
-        print '\n'.join(nbest)
-        #open('/tmp/tests.txt', 'w').write(nbest)
-        #parses = sh.parseIt('-M', '-C', '-K', '-L', 'En', str(fold_dir.join('LM')),
-        #           '/tmp/tests.txt').stdout
-        #print parses
+    raw_text = fold_dir.join('test-strings.txt').open().read()
+    nbest_re = re.compile(r'\nN=\d+\t')
+    scored = []
+    for raw_nbest in nbest_re.split(raw_text):
+        sent_strs = get_sent_strs(raw_nbest)
+        open('/tmp/tests.txt', 'w').write(nbest)
+        parses = sh.parseIt('-M', '-C', '-K', str(fold_dir.join('LM')),
+                           '/tmp/tests.txt').stdout
+        scored.append(add_scores(raw_nbest, parses))
+    fold_dir.join('scored-test.txt').open('w').write(u'\n'.join(scored))
+
+
+def add_scores(raw_nbest, parses):
+    parse_sents = parses.strip().split('\n\n')
+    nbest_sents = raw_nbest.split('\n')
+    gold = nbest_sents.pop(0)
+    assert len(parse_sents) == len(nbest_sents)
+    lines = [gold]
+    for sent, scored_parse in zip(parse_sents, nbest_sents):
+        parse_scores, parse = scored_parse.split('\n')
+        pieces = sent.split()
+        pieces.insert(7, parse_scores)
+        lines.append(' '.join(pieces))
+    return '\n'.join(lines)
 
 
 def main(bllip_loc, cvfolds):

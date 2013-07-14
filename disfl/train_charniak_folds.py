@@ -15,6 +15,32 @@ import plac
 import sh
 import re
 
+from Treebank.PTB import PTBFile
+
+def clean_file(f):
+    to_prune = set(['EDITED', 'CODE', 'RM', 'RS', 'IP', '-DFL-'])
+    for sent in f.children():
+        for node in sent.depthList():
+            if node.label in to_prune:
+                node.prune()
+            elif node.isLeaf() and node.isPunct():
+                node.prune()
+            elif node.isLeaf() and node.text[-1] == '-':
+                node.prune()
+            elif node.label == 'TYPO':
+                parent = node.parent()
+                node.prune()
+                for child in node.children():
+                    child.reattach(parent)
+        for node in sent.depthList():
+            words = [w for w in node.listWords()]
+            if not words:
+                node.prune()
+        words = [w for w in sent.listWords() if not w.isTrace()]
+        if not words:
+            f.detachChild(sent)
+
+
 def write_train(ptb_loc, fold_dir):
     ptb_loc = Path(ptb_loc)
     fold_dir = Path(fold_dir)
@@ -22,12 +48,11 @@ def write_train(ptb_loc, fold_dir):
     swbd_header_re = re.compile(r'\*x\*.+\*x\*\n')
     speaker_code_re = re.compile(r'\( \(CODE .+\n')
     for fn in fold_dir.join('mrg-train-filenames.txt').open():
-        trees = ptb_loc.join(str(fn.strip())).open().read().strip()
-        trees = swbd_header_re.sub('', trees).strip()
-        trees = speaker_code_re.sub('', trees).strip()
-        all_trees.append(trees)
-    # Reserve 20 files for held-out
-    heldout = all_trees[:20]
+        ptb_file = PTBFile(path=str(ptb_loc.join(str(fn.strip()))))
+        clean_file(ptb_file)
+        all_trees.extend(str(sent) for sent in ptb_file.children())
+    # Reserve 1000 sentences for held out
+    heldout = all_trees[:1000]
     train = all_trees[20:]
     fold_dir.join('train.mrg').open('w').write(u'\n'.join(train))
     fold_dir.join('heldout.mrg').open('w').write(u'\n'.join(heldout))

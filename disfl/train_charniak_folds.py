@@ -50,7 +50,7 @@ def write_train(ptb_loc, fold_dir):
     for fn in fold_dir.join('mrg-train-filenames.txt').open():
         ptb_file = PTBFile(path=str(ptb_loc.join(str(fn.strip()))))
         clean_file(ptb_file)
-        all_trees.extend(str(sent) for sent in ptb_file.children())
+        all_trees.extend('( ' + str(sent) + ')' for sent in ptb_file.children())
     # Reserve 1000 sentences for held out
     heldout = all_trees[:1000]
     train = all_trees[20:]
@@ -61,6 +61,7 @@ def write_train(ptb_loc, fold_dir):
 def main(cvfolds):
     ptb_loc = '/usr/local/data/Penn3/parsed/mrg/swbd/'
     for fold_dir in Path(cvfolds):
+        print fold_dir
         write_train(ptb_loc, fold_dir)
         #train_parser(fold_dir)
 

@@ -60,10 +60,31 @@ def write_train(ptb_loc, fold_dir):
 
 def train_parser(bllip_loc, fold_dir):
     bllip_loc = Path(bllip_loc)
-    data_loc = bllip_loc.join('DATA').join('LM')
-    sh.cp(str(data_loc), str(fold_dir), '-r')
-    sh.trainParser(str(fold_dir.join('train.mrg')), str(fold_dir.join('heldout.mrg')),
-                   '-lm', '-En')
+    data_loc = bllip_loc.join('first-stage/DATA').join('LM')
+    sh.cp('-r', str(data_loc), str(fold_dir))
+    sh.trainParser('-lm', '-En',
+                   str(fold_dir.join('LM')),
+                   str(fold_dir.join('train.mrg')),
+                   str(fold_dir.join('heldout.mrg')))
+
+def get_nbests(raw_text):
+    nbest_re = re.compile(r'\nN=\d+\t')
+    for raw_nbest in nbest_re.split(raw_text):
+        nbest = []
+        for raw_sent in raw_nbest.split('\n')[1:]:
+            raw_words = raw_sent.split()[7:]
+            words = [w for (i, w) in enumerate(raw_words)[:-1] if raw_words[i + 1] == '_']
+            nbest.append('<s> ' + ' '.join(words) + '</s>')
+            yield '\n'.join(nbest)
+
+
+def parse_test(fold_dir):
+    for nbest in get_nbests(fold_dir.join('test-strings.txt').open().read()):
+        print '\n'.join(nbest)
+        #open('/tmp/tests.txt', 'w').write(nbest)
+        #parses = sh.parseIt('-M', '-C', '-K', '-L', 'En', str(fold_dir.join('LM')),
+        #           '/tmp/tests.txt').stdout
+        #print parses
 
 
 def main(bllip_loc, cvfolds):
@@ -71,7 +92,9 @@ def main(bllip_loc, cvfolds):
     for fold_dir in Path(cvfolds):
         print fold_dir
         write_train(ptb_loc, fold_dir)
-        train_parser(bllip_loc, fold_dir)
+        #train_parser(bllip_loc, fold_dir)
+        parse_test(fold_dir)
+        break
 
 
 if __name__ == '__main__':

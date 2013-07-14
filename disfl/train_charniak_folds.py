@@ -58,12 +58,20 @@ def write_train(ptb_loc, fold_dir):
     fold_dir.join('heldout.mrg').open('w').write(u'\n'.join(heldout))
 
 
-def main(cvfolds):
+def train_parser(bllip_loc, fold_dir):
+    bllip_loc = Path(bllip_loc)
+    data_loc = bllip_loc.join('DATA').join('LM')
+    sh.cp(str(data_loc), str(fold_dir), '-r')
+    sh.trainParser(str(fold_dir.join('train.mrg')), str(fold_dir.join('heldout.mrg')),
+                   '-lm', '-En')
+
+
+def main(bllip_loc, cvfolds):
     ptb_loc = '/usr/local/data/Penn3/parsed/mrg/swbd/'
     for fold_dir in Path(cvfolds):
         print fold_dir
         write_train(ptb_loc, fold_dir)
-        #train_parser(fold_dir)
+        train_parser(bllip_loc, fold_dir)
 
 
 if __name__ == '__main__':

@@ -13,14 +13,22 @@ and write in the scores."""
 from pathlib import Path
 import plac
 import sh
+import re
 
 def write_train(ptb_loc, fold_dir):
     ptb_loc = Path(ptb_loc)
     fold_dir = Path(fold_dir)
-    text = []
+    all_trees = []
+    swbd_header_re = re.compile(r'\*x\*.+\*x\*\n')
     for fn in fold_dir.join('mrg-train-filenames.txt').open():
-        text.append(ptb_loc.join(str(fn.strip())).open().read().strip())
-    fold_dir.join('train.mrg').open('w').write(u'\n'.join(text))
+        trees = ptb_loc.join(str(fn.strip())).open().read().strip()
+        trees = swbd_header_re.sub('', trees).strip()
+        all_trees.append(trees)
+    # Reserve 20 files for held-out
+    heldout = all_trees[:20]
+    train = all_trees[20:]
+    fold_dir.join('train.mrg').open('w').write(u'\n'.join(train))
+    fold_dir.join('heldout.mrg').open('w').write(u'\n'.join(heldout))
 
 
 def main(cvfolds):

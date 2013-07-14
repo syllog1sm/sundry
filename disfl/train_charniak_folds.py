@@ -20,9 +20,11 @@ def write_train(ptb_loc, fold_dir):
     fold_dir = Path(fold_dir)
     all_trees = []
     swbd_header_re = re.compile(r'\*x\*.+\*x\*\n')
+    speaker_code_re = re.compile(r'\( \(CODE .+\n')
     for fn in fold_dir.join('mrg-train-filenames.txt').open():
         trees = ptb_loc.join(str(fn.strip())).open().read().strip()
         trees = swbd_header_re.sub('', trees).strip()
+        trees = speaker_code_re.sub('', trees).strip()
         all_trees.append(trees)
     # Reserve 20 files for held-out
     heldout = all_trees[:20]

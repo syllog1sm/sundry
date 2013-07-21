@@ -14,10 +14,62 @@ from pathlib import Path
 import plac
 import sh
 import re
+import math
 
 from Treebank.PTB import PTBFile
 
-def clean_file(f):
+class NBest(list):
+    """An nbest list of candidates."""
+    def __init__(self, nbest_strs):
+        list.__init__(self)
+        lines = nbest_strs.split('\n')
+        self.gold = lines.pop(0)
+        self.n = len(lines)
+        self.extend(Candidate(line) for line in lines)
+
+    def to_str(self):
+        lines = [u'N=%d\t%s' % (self.n, self.gold)]
+        for cand in self:
+            lines.append(cand.to_str)
+        return u'\n'.join(lines)
+
+
+class Candidate(object):
+    """A candidate disfluency analysis from an nbest list"""
+    def __init__(self, i, raw_str):
+        self.i = i
+        pieces = raw_str.split()
+        self.scores = [float(s) for s in pieces[:7]]
+        self.cand_str = ' '.join(pieces[7:])
+        self.words = [w for (i, w) in enumerate(pieces)[:-1]
+                      if raw_words[i + 1] == '_']
+        self.to_parse = '<s> ' + ' '.join(words) + ' </s>'
+        self.parse = None
+
+    def to_str(self):
+        pieces = [str(score) for score in self.scores]
+        pieces.append(self.cand_str)
+        return '\n'.join(pieces)
+
+
+def write_train(ptb_loc, fold_dir):
+    ptb_loc = Path(ptb_loc)
+    fold_dir = Path(fold_dir)
+    all_trees = []
+    swbd_header_re = re.compile(r'\*x\*.+\*x\*\n')
+    speaker_code_re = re.compile(r'\( \(CODE .+\n')
+    for fn in fold_dir.join('mrg-train-filenames.txt').open():
+        ptb_file = PTBFile(path=str(ptb_loc.join(str(fn.strip()))))
+        _clean_mrg_file(ptb_file)
+        all_trees.extend('( ' + str(sent) + ')' for sent in ptb_file.children())
+    # Reserve 1000 sentences for held out
+    heldout = all_trees[:1000]
+    train = all_trees[1000:]
+    fold_dir.join('train.mrg').open('w').write(u'\n'.join(train))
+    fold_dir.join('heldout.mrg').open('w').write(u'\n'.join(heldout))
+
+
+def _clean_mrg_file(f):
     to_prune = set(['EDITED', 'CODE', 'RM', 'RS', 'IP', '-DFL-'])
     for sent in f.children():
         for node in sent.depthList():
@@ -41,23 +93,6 @@ def clean_file(f):
             f.detachChild(sent)
 
 
-def write_train(ptb_loc, fold_dir):
-    ptb_loc = Path(ptb_loc)
-    fold_dir = Path(fold_dir)
-    all_trees = []
-    swbd_header_re = re.compile(r'\*x\*.+\*x\*\n')
-    speaker_code_re = re.compile(r'\( \(CODE .+\n')
-    for fn in fold_dir.join('mrg-train-filenames.txt').open():
-        ptb_file = PTBFile(path=str(ptb_loc.join(str(fn.strip()))))
-        clean_file(ptb_file)
-        all_trees.extend('( ' + str(sent) + ')' for sent in ptb_file.children())
-    # Reserve 1000 sentences for held out
-    heldout = all_trees[:1000]
-    train = all_trees[20:]
-    fold_dir.join('train.mrg').open('w').write(u'\n'.join(train))
-    fold_dir.join('heldout.mrg').open('w').write(u'\n'.join(heldout))
-
-
 def train_parser(bllip_loc, fold_dir):
     bllip_loc = Path(bllip_loc)
     data_loc = bllip_loc.join('first-stage/DATA').join('LM')
@@ -67,41 +102,35 @@ def train_parser(bllip_loc, fold_dir):
                    str(fold_dir.join('train.mrg')),
                    str(fold_dir.join('heldout.mrg')))
 
-def get_sent_strs(raw_nbest):
-    nbest = []
-    # Suppress gold sent
-    for raw_sent in raw_nbest.split('\n')[1:]:
-        raw_words = raw_sent.split()[7:]
-        words = [w for (i, w) in enumerate(raw_words)[:-1] if raw_words[i + 1] == '_']
-        nbest.append('<s> ' + ' '.join(words) + ' </s>')
-    return '\n'.join(nbest)
-
 
 def parse_test(fold_dir):
-    raw_text = fold_dir.join('test-strings.txt').open().read()
     nbest_re = re.compile(r'\nN=\d+\t')
-    scored = []
-    for raw_nbest in nbest_re.split(raw_text):
-        sent_strs = get_sent_strs(raw_nbest)
-        open('/tmp/tests.txt', 'w').write(nbest)
-        parses = sh.parseIt('-M', '-C', '-K', str(fold_dir.join('LM')),
-                           '/tmp/tests.txt').stdout
-        scored.append(add_scores(raw_nbest, parses))
-    fold_dir.join('scored-test.txt').open('w').write(u'\n'.join(scored))
+    raw_text = fold_dir.join('test-strings.txt').open().read()
+    nbests = [NBest(raw) for raw in nbest_re.split(raw_text)]
+    strings = []
+    cand_dict = {}
+    for nbest in nbests:
+        for candidate in nbest:
+            strings.append(candidate.to_parse)
+            cand_dict[candidate.to_parse] = candidate
+    _add_parse_scores(strings, cand_dict)
+    out_file = fold_dir.join('scored-test.txt').open('w')
+    for nbest in nbests:
+        out_file.write(unicode(nbest.to_str()))
+        out_file.write(u'\n')
+    out_file.close()
 
 
-def add_scores(raw_nbest, parses):
-    parse_sents = parses.strip().split('\n\n')
-    nbest_sents = raw_nbest.split('\n')
-    gold = nbest_sents.pop(0)
-    assert len(parse_sents) == len(nbest_sents)
-    lines = [gold]
-    for sent, scored_parse in zip(parse_sents, nbest_sents):
-        parse_scores, parse = scored_parse.split('\n')
-        pieces = sent.split()
-        pieces.insert(7, parse_scores)
-        lines.append(' '.join(pieces))
-    return '\n'.join(lines)
+def _add_parse_scores(strings, cand_dict):
+    open('/tmp/to_parse.txt', 'w').write('\n'.join(strings))
+    parses = sh.parseIt('-M', '-C', '-K', str(fold_dir.join('LM')),
+                        '/tmp/tests.txt').stdout
+    for parse_and_scores in parses.split('\n\n'):
+        scores, parse = parse_and_score.split('\n')
+        input_str = get_str(parse)
+        candidate = cand_dict[input_str]
+        candidate.parse = parse
+        candidate.scores.extend(math.exp(float(s)) for s in scores.split())
 
 
 def main(bllip_loc, cvfolds):
@@ -109,7 +138,7 @@ def main(bllip_loc, cvfolds):
     for fold_dir in Path(cvfolds):
         print fold_dir
         write_train(ptb_loc, fold_dir)
-        #train_parser(bllip_loc, fold_dir)
+        train_parser(bllip_loc, fold_dir)
         parse_test(fold_dir)
         break
 

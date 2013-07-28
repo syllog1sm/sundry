@@ -61,7 +61,7 @@ class PTBSentence(PTBNode, Sentence):
         by_identifier = dict((n.identifier, n) for n in top.depthList() if n.identifier)
         for node in top.depthList():
             if node.identified:
-                node.traced = by_identifier[node.identified]
+                node.traced = by_identifier.get(node.identified)
         return top
         
 

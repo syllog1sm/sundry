@@ -42,7 +42,10 @@ class Node(object):
             raise AttachmentError('Cannot attach node: %s to: %s Node is already attached to %s' \
             % (newChild.prettyPrint(), self.prettyPrint(), newChild.parent().prettyPrint()))
         if index == None:
-            bisect.insort_right(self._children, newChild)
+            if not self._children:
+                self._children.append(newChild)
+            else:
+                bisect.insort_right(self._children, newChild)
         else:
             self._children.insert(index, newChild)
         newChild.setParent(self)
@@ -167,6 +170,8 @@ class Node(object):
         Word ID at index. Generally 0 or -1
         """
         wordIDList = [word.wordID for word in self.listWords()]
+        if not wordIDList:
+            return 0
         return wordIDList[index]
         
     def getWord(self, index):

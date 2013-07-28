@@ -88,6 +88,7 @@ def _clean_mrg_file(f):
             words = [w for w in node.listWords()]
             if not words:
                 node.prune()
+        # Trim sentences with no lexical words
         words = [w for w in sent.listWords() if not w.isTrace()]
         if not words:
             f.detachChild(sent)
@@ -124,7 +125,7 @@ def parse_test(fold_dir):
 def _add_parse_scores(strings, cand_dict):
     open('/tmp/to_parse.txt', 'w').write('\n'.join(strings))
     parses = sh.parseIt('-M', '-C', '-K', str(fold_dir.join('LM')),
-                        '/tmp/tests.txt').stdout
+                        '/tmp/to_parse.txt').stdout
     for parse_and_scores in parses.split('\n\n'):
         scores, parse = parse_and_score.split('\n')
         input_str = get_str(parse)

@@ -34,6 +34,7 @@ def get_dps_string(sent):
     edit_starts = set()
     edit_ends = set()
     disfl = set()
+    # TODO: Comment this out to turn off marking words under EDITED as disfluent
     for node in sent.depthList():
         if node.label == 'EDITED':
             disfl.update(node.listWords())

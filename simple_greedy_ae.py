@@ -127,9 +127,9 @@ class Parser:
             gold_moves = get_optimal(valid_moves, s.n0, s.s0, s.n, s.stack, gold.heads)
             guess = max(valid_moves, key=lambda move: scores[move])
             best = max(gold_moves, key=lambda move: scores[move])
-            print guess, best, scores[guess], scores[best], len(features)
-            print [(f, self.model.weights.get(f, {}).get(guess)) for f in features.keys()
-                    if self.model.weights.get(f, {}).get(guess)]
+            #print guess, best, scores[guess], scores[best], len(features)
+            #print [(f, self.model.weights.get(f, {}).get(guess)) for f in features.keys()
+            #        if self.model.weights.get(f, {}).get(guess)]
 
             self.model.update(best, guess, features)
             transition(s, guess)
@@ -206,10 +206,8 @@ def extract_features(words, tags, state):
     Bn0L2 = '1' if n0L2 else ''
 
     features['bias'] = 1
-
     w = (Wn0, Wn1, Wn2, Ws0, Ws0h, Ws0h2, Wn0L1, Wn0L2, Ws0L1, Ws0L2, Ws0R1, Ws0R2)
     t = (Tn0, Tn1, Tn2, Ts0, Ts0h, Ts0h2, Tn0L1, Tn0L2, Ts0L1, Ts0L2, Ts0R1, Ts0R2)
-    #n = (Vn0L, Vs0L, Vs0R, Ds0n0)
     b = (Bs0h, Bs0h2, Bs0R1, Bs0R2, Bs0L1, Bs0L2, Bn0L1, Bn0L2)
     for code, templates in zip(('w', 't', 'b'), (w, t, b)):
         for i, value in enumerate(templates):
@@ -239,8 +237,8 @@ def extract_features(words, tags, state):
     vw = ((Ws0, Vs0R), (Ws0, Vs0L), (Wn0, Vn0L))
     vt = ((Ts0, Vs0R), (Ts0, Vs0L), (Tn0, Vn0L))
     d = ((Ws0, Ds0n0), (Wn0, Ds0n0), (Ts0, Ds0n0), (Tn0, Ds0n0),
-         (Tn0+Ts0, Ds0n0), (Wn0+Ws0, Ds0n0))
-    for i, (w_t, v_d) in enumerate(vw + vt):
+         ('t' + Tn0+Ts0, Ds0n0), ('w' + Wn0+Ws0, Ds0n0))
+    for i, (w_t, v_d) in enumerate(vw + vt + d):
         if w_t or v_d:
             features['val/d-%d %s %s' % (i, w_t, v_d)] = 1
     labels = ((Ws0, Bs0R1, Bs0R2), (Ts0, Bs0R1, Bs0R2), (Ws0, Bs0L1, Bs0L2),
@@ -278,8 +276,8 @@ def main(model_dir, train_loc, heldout_loc):
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
     parser = Parser(model_dir)
-    sentences = list(read_conll(train_loc))[:10]
-    parser.train(sentences, nr_iter=5)
+    sentences = list(read_conll(train_loc))[:1000]
+    parser.train(sentences, nr_iter=15)
     parser.model.save('/tmp/parser.pickle')
     c = 0
     t = 0

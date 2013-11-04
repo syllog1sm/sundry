@@ -29,11 +29,14 @@ class Perceptron(object):
         return max(self.classes, key=lambda clas: (scores[clas], clas))
 
     def score(self, features):
-        scores = defaultdict(float)
+        scores = {0: 0, 1: 0, 2: 0, 3: 0}
+        all_weights = self.weights
         for feat, value in features.items():
-            if feat not in self.weights or value == 0:
+            if value == 0:
                 continue
-            weights = self.weights[feat]
+            if feat not in all_weights:
+                continue
+            weights = all_weights[feat]
             for clas, weight in weights.items():
                 scores[clas] += value * weight
         return scores

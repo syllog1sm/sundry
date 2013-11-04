@@ -120,7 +120,6 @@ class Parser:
         #tags = [None] + self.tagger.tag(words[1:])
         s = State(len(words))
         c = 0
-        i = 0
         while s.stack or s.n0 < s.n:
             features = extract_features(words, gold_tags, s)
             scores = self.model.score(features)
@@ -133,10 +132,7 @@ class Parser:
                     if self.model.weights.get(f, {}).get(guess)]
 
             self.model.update(best, guess, features)
-            #if itn >= 2 and random.random() < 0.9:
             transition(s, guess)
-            #else:
-            #    transition(s, best)
             c += guess == best
         return c
 
@@ -173,7 +169,7 @@ def extract_features(words, tags, state):
     # An argument of add() that starts lower-case is a bug!!
     # An array index that starts upper-case is a bug!!
     #
-    n1 = (n0 + 1) if (n0 + 1) < length else 0
+    n1 = (n0 + 1) if (n0 + 1) < length else 0 
     n2 = (n0 + 2) if (n0 + 2) < length else 0
     s0h = heads[s0] if heads[s0] is not None else 0
     s0h2 = heads[s0h] if heads[s0h] is not None else 0
@@ -199,7 +195,7 @@ def extract_features(words, tags, state):
     Vs0L = str(min((len(lefts[s0]) - 2, 5)))
     Vs0R = str(min((len(rights[s0]) - 2, 5)))
     # String-distance
-    Ds0n0 = str(min((n0 - s0, 5)) if s0 != 0 else 0)
+    Ds0n0 = str(min((n0 - s0, 5))) if s0 != 0 else '' 
     Bs0h = '1' if s0h else ''
     Bs0h2 = '1' if s0h2 else ''
     Bs0R1 = '1' if s0R1 else ''
@@ -208,83 +204,50 @@ def extract_features(words, tags, state):
     Bs0L2 = '1' if s0L2 else ''
     Bn0L1 = '1' if n0L1 else ''
     Bn0L2 = '1' if n0L2 else ''
-    # Now start adding the features
-    # Bias
-    add('bias', '1')
-    # Unigram, word
-    add('w-n0', Wn0); add('w-n1', Wn1); add('w-n2', Wn2)
-    add('w-s0', Ws0); add('w-s0h', Ws0h); add('w-s0h2', Ws0h2)
-    add('w-n0.l[0]', Wn0L1); add('w-n0.l[1]', Wn0L2)
-    add('w-s0.l[0]', Ws0L1); add('w-s0.l[1]', Ws0L2)
-    add('w-s0.r[0]', Ws0R1); add('w-s0.r[1]', Ws0R2)
-    # Unigram, tag
-    add('t-n0', Tn0); add('t-n1', Tn1); add('t-n2', Tn2)
-    add('t-s0', Ts0); add('t-s0h', Ts0h); add('t-s0h2', Ts0h2)
-    add('t-n0.l[0]', Tn0L1); add('t-n0.l[1]', Tn0L2)
-    add('t-s0.l[0]', Ts0L1); add('t-s0.l[1]', Ts0L2)
-    add('t-s0.r[0]', Ts0R1); add('t-s0.r[1]', Ts0R2)
-    # Unigram, word+tag
-    add('wt-n0', Wn0, Tn0); add('wt-n1', Wn1, Tn1); add('wt-n2', Wn2, Tn2)
-    add('wt-s0', Ws0, Ts0)
-    # Bigram, word/word
-    add('w-s0+w-n0', Wn0, Ws0)
-    # Bigram, word+tag/word
-    add('wt-s0, w-n0', Ws0, Ts0, Wn0)
-    add('w-s0, wt-n0', Ws0, Wn0, Tn0)
-    # Bigram, word+tag/tag
-    add('wt-s0+t-n0', Ws0, Ts0, Tn0)
-    add('t-s0, wt-n0', Ts0, Wn0, Tn0)
-    # Bigram, word+tag/word+tag
-    add('wt-s0, wt-n0', Ws0, Ts0, Wn0, Tn0)
-    # Bigram, tag/tag
-    add('t-s0, t-n0', Ts0, Tn0)
-    add('t-n0, t-n1', Tn0, Tn1)
-    # Trigram, tag/tag/tag
-    add('buffer tritag', Tn0, Tn1, Tn2)
-    add('s0, n0, n1 tritag', Ts0, Tn0, Tn1)
-    add('s0, s0h, n0 tritag', Ts0, Ts0h, Tn0)
-    add('s0, s0L, n0 tritag', Ts0, Ts0L1, Tn0)
-    add('s0, s0R, n0 tritag', Ts0, Ts0R1, Tn0)
-    add('s0, n0, n0L tritag', Ts0, Tn0, Tn0L1)
-    add('s0 left tritag', Ts0, Ts0L1, Ts0L2)
-    add('s0 right tritag', Ts0, Ts0R1, Ts0R2)
-    add('n0 left tritag', Tn0, Tn0L1, Tn0L2)
-    add('stack tritag', Ts0, Ts0h, Ts0h2)
-    # 'Valency' is number of children attached to a word from left or right
-    # Valency + word
-    add('s0 right val. + word', Ws0, Vs0R)
-    add('s0 left val. + word', Ws0, Vs0L)
-    add('n0 left val. + word', Wn0, Vn0L)
-    # Valency + tag
-    add('s0 right val. + tag', Ts0, Vs0R)
-    add('s0 left val. + tag', Ts0, Vs0L)
-    add('n0 left val. + tag', Tn0, Vn0L)
-    # 'Distance' is the number of tokens between s0 and n0
-    # Distance + word
-    add('dist + w-s0', Ds0n0, Ws0)
-    add('dist + w-n0', Ds0n0, Wn0)
-    # Distance + tag
-    add('dist + t-s0', Ds0n0, Ts0)
-    add('dist + t-n0', Ds0n0, Tn0)
-    # Bigram, word/word + distance
-    add('dist + w-s0 + w-n0', Ds0n0, Ws0, Wn0)
-    # Bigram, tag/tag + distance
-    add('dist + t-s0 + t-n0', Ds0n0, Ts0, Tn0)
-    # "Label" features
-    add('S0l', Bs0h)
-    add('S0hl', Bs0h2)
-    add('S0ll', Bs0L1)
-    add('S0l2l', Bs0L2)
-    add('S0rl', Bs0R1)
-    add('S0r2l', Bs0R1)
-    add('N0ll', Bn0L1)
-    add('N0l2l', Bn0L2)
-    add('S0w, S0rl, S0r2l', Ws0, Bs0R1, Bs0R2)
-    add('S0p, S0rl, S0r2l', Ts0, Bs0R1, Bs0R2)
-    add('S0w, S0ll, S0l2l', Ws0, Bs0L1, Bs0L2)
-    add('S0p, S0ll, S0l2l', Ts0, Bs0L1, Bs0L2)
-    add('N0w, N0ll, N0l2l', Wn0, Bn0L1, Bn0L2)
-    add('N0p, N0ll, N0l2l', Tn0, Bn0L1, Bn0L2)
+
+    features['bias'] = 1
+
+    w = (Wn0, Wn1, Wn2, Ws0, Ws0h, Ws0h2, Wn0L1, Wn0L2, Ws0L1, Ws0L2, Ws0R1, Ws0R2)
+    t = (Tn0, Tn1, Tn2, Ts0, Ts0h, Ts0h2, Tn0L1, Tn0L2, Ts0L1, Ts0L2, Ts0R1, Ts0R2)
+    #n = (Vn0L, Vs0L, Vs0R, Ds0n0)
+    b = (Bs0h, Bs0h2, Bs0R1, Bs0R2, Bs0L1, Bs0L2, Bn0L1, Bn0L2)
+    for code, templates in zip(('w', 't', 'b'), (w, t, b)):
+        for i, value in enumerate(templates):
+            if value:
+                features['%s%d %s' % (code, i, value)] = 1
+
+    wt = ((Wn0, Tn0), (Wn1, Tn1), (Wn2, Tn2), (Ws0, Ts0))
+    for i, (word, tag) in enumerate(wt):
+        if word or tag:
+            features['wt-%d %s %s' % (i, word, tag)] = 1
+    features['ww %s %s' % (Ws0, Wn0)] = 1
+    features['wn0tn0-ws0 %s/%s %s' % (Wn0, Tn0, Ws0)] = 1
+    features['wn0tn0-ts0 %s/%s %s' % (Wn0, Tn0, Ts0)] = 1
+    features['ws0ts0-wn0 %s/%s %s' % (Ws0, Ts0, Wn0)] = 1
+    features['ws0-ts0 tn0 %s/%s %s' % (Ws0, Ts0, Tn0)] = 1
+    features['wt-wt %s/%s %s/%s' % (Ws0, Ts0, Wn0, Tn0)] = 1
+    features['tt s0=%s n0=%s' % (Ts0, Tn0)] = 1
+    features['tt n0=%s n1=%s' % (Tn0, Tn1)] = 1
+
+    trigrams = ((Tn0, Tn1, Tn2), (Ts0, Tn0, Tn1), (Ts0, Ts0h, Tn0), 
+                (Ts0, Ts0L1, Tn0), (Ts0, Ts0R1, Tn0), (Ts0, Tn0, Tn0L1),
+                (Ts0, Ts0L1, Ts0L2), (Ts0, Ts0R1, Ts0R2), (Tn0, Tn0L1, Tn0L2),
+                (Ts0, Ts0h, Ts0h2))
+    for i, (t1, t2, t3) in enumerate(trigrams):
+        if t1 or t2 or t3:
+            features['ttt-%d %s %s %s' % (i, t1, t2, t3)] = 1
+    vw = ((Ws0, Vs0R), (Ws0, Vs0L), (Wn0, Vn0L))
+    vt = ((Ts0, Vs0R), (Ts0, Vs0L), (Tn0, Vn0L))
+    d = ((Ws0, Ds0n0), (Wn0, Ds0n0), (Ts0, Ds0n0), (Tn0, Ds0n0),
+         (Tn0+Ts0, Ds0n0), (Wn0+Ws0, Ds0n0))
+    for i, (w_t, v_d) in enumerate(vw + vt):
+        if w_t or v_d:
+            features['val/d-%d %s %s' % (i, w_t, v_d)] = 1
+    labels = ((Ws0, Bs0R1, Bs0R2), (Ts0, Bs0R1, Bs0R2), (Ws0, Bs0L1, Bs0L2),
+             (Ts0, Bs0L1, Bs0L2), (Wn0, Bn0L1, Bn0L2), (Tn0, Bn0L1, Bn0L2))
+    for i, (w_t, l1, l2) in enumerate(labels):
+        if w_t or l1 or l2:
+            features['label-%d %s %s %s' % (i, w_t, l1, l2)] = 1
     return features
 
 
@@ -332,9 +295,11 @@ def main(model_dir, train_loc, heldout_loc):
 
 
 if __name__ == '__main__':
-    import plac
+    import sys
     import cProfile
     import pstats
-    cProfile.runctx('plac.call(main)', globals(), locals(), "Profile.prof")
-    s = pstats.Stats("Profile.prof")
-    s.strip_dirs().sort_stats("time").print_stats()
+    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    #cProfile.runctx('main(sys.argv[1], sys.argv[2], sys.argv[3])', globals(),
+    #$                locals(), "Profile.prof")
+    #s = pstats.Stats("Profile.prof")
+    #s.strip_dirs().sort_stats("time").print_stats()

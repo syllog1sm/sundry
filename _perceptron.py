@@ -30,7 +30,7 @@ class Perceptron(object):
 
     def score(self, features):
         scores = defaultdict(float)
-        for feat in features.items():
+        for feat, value in features.items():
             if feat not in self.weights or value == 0:
                 continue
             weights = self.weights[feat]

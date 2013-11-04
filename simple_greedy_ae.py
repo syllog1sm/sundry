@@ -128,6 +128,10 @@ class Parser:
             gold_moves = get_optimal(valid_moves, s.n0, s.s0, s.n, s.stack, gold.heads)
             guess = max(valid_moves, key=lambda move: scores[move])
             best = max(gold_moves, key=lambda move: scores[move])
+            print guess, best, scores[guess], scores[best], len(features)
+            print [(f, self.model.weights.get(f, {}).get(guess)) for f in features.keys()
+                    if self.model.weights.get(f, {}).get(guess)]
+
             self.model.update(best, guess, features)
             #if itn >= 2 and random.random() < 0.9:
             transition(s, guess)
@@ -141,7 +145,7 @@ class Parser:
         total = 0
         for itn in range(nr_iter):
             corr = 0; total = 0
-            random.shuffle(sentences)
+            #random.shuffle(sentences)
             for words, gold_tags, gold_parse in sentences:
                 corr += self.train_one(itn, words, gold_tags, gold_parse)
                 #self.tagger.train_one(words[1:], gold_tags[1:])
@@ -311,7 +315,7 @@ def main(model_dir, train_loc, heldout_loc):
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
     parser = Parser(model_dir)
-    sentences = list(read_conll(train_loc))[:1000]
+    sentences = list(read_conll(train_loc))[:10]
     parser.train(sentences, nr_iter=5)
     parser.model.save('/tmp/parser.pickle')
     c = 0

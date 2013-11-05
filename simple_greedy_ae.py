@@ -12,6 +12,7 @@ class Parse(object):
         self.heads = [None] * (n + 1)
         self.lefts = []
         self.rights = []
+        # Pad these, for easy look up
         for i in range(n+1):
             self.lefts.append([0, 0])
             self.rights.append([0, 0])
@@ -88,7 +89,7 @@ def get_optimal(moves, n0, s0, n, stack, heads):
     invalid = set()
     if s0 != 0 and n0 != 0 and heads[n0] == s0:
         return [RIGHT]
-    elif heads[n0] > n0 or heads[n0] in stack:
+    elif heads[n0] > n0:
         invalid.add(RIGHT)
     if s0 != 0 and n0 != 0 and heads[s0] == n0:
         return [LEFT]
@@ -130,10 +131,6 @@ class Parser:
             gold_moves = get_optimal(valid_moves, s.n0, s.s0, s.n, s.stack, gold.heads)
             guess = max(valid_moves, key=lambda move: scores[move])
             best = max(gold_moves, key=lambda move: scores[move])
-            #print guess, best, scores[guess], scores[best], len(features)
-            #print [(f, self.model.weights.get(f, {}).get(guess)) for f in features.keys()
-            #        if self.model.weights.get(f, {}).get(guess)]
-
             self.model.update(best, guess, features)
             transition(s, guess)
             c += guess == best
@@ -156,10 +153,6 @@ class Parser:
 
 def extract_features(words, tags, state):
     features = {}
-    def add(name, *values):
-        if any(values):
-            features[name + ' '.join(values)] = 1
-    
     # Setup
     heads = state.parse.heads; lefts = state.parse.lefts; rights = state.parse.rights
     n0 = state.n0; s0 = state.s0; length = state.n

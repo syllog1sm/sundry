@@ -76,6 +76,8 @@ def get_valid(state):
         invalid.add(SHIFT); invalid.add(RIGHT)
     if not state.stack:
         invalid.add(REDUCE); invalid.add(RIGHT); invalid.add(LEFT)
+    elif len(state.stack) == 1:
+        invalid.add(REDUCE)
     if len(invalid) == len(MOVES):
         print state.n0, state.s0, state.n
         raise StandardError

@@ -4,6 +4,7 @@ from _perceptron import Perceptron
 from taggers import PerceptronTagger
 import os
 from os import path
+import time
 
 
 class Parse(object):
@@ -141,7 +142,7 @@ class Parser:
         total = 0
         for itn in range(nr_iter):
             corr = 0; total = 0
-            #random.shuffle(sentences)
+            random.shuffle(sentences)
             for words, gold_tags, gold_parse in sentences:
                 corr += self.train_one(itn, words, gold_tags, gold_parse)
                 #self.tagger.train_one(words[1:], gold_tags[1:])
@@ -276,11 +277,12 @@ def main(model_dir, train_loc, heldout_loc):
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
     parser = Parser(model_dir)
-    sentences = list(read_conll(train_loc))[:1000]
+    sentences = list(read_conll(train_loc))[:20000]
     parser.train(sentences, nr_iter=15)
     parser.model.save('/tmp/parser.pickle')
     c = 0
     t = 0
+    t1 = time.time()
     for words, gold_tags, gold_parse in read_conll(heldout_loc):
         tags, heads = parser.parse(words, gold_tags)
         for i, w in list(enumerate(words))[1:-1]:
@@ -289,6 +291,8 @@ def main(model_dir, train_loc, heldout_loc):
             if heads[i] == gold_parse.heads[i]:
                 c += 1
             t += 1
+    t2 = time.time()
+    print 'Parsing took %0.3f ms' % ((t2-t1)*1000.0)
     print c, t, float(c)/t
 
 

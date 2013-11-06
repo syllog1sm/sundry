@@ -28,9 +28,9 @@ class Parse(object):
 
 class State(object):
     def __init__(self, n):
-        self.n0 = 1
+        self.n0 = 2 
         self.n = n - 1
-        self.stack = []
+        self.stack = [1]
         self.parse = Parse(n)
 
     @property
@@ -45,91 +45,65 @@ class State(object):
         self.stack.pop()
 
 
-SHIFT = 0; REDUCE = 1; LEFT = 2; RIGHT = 3
-MOVES = [SHIFT, REDUCE, LEFT, RIGHT]
+SHIFT = 0; REDUCE = 1; LEFT = 2;
+MOVES = [SHIFT, REDUCE, LEFT]
 
 
 def transition(state, move):
     if move == SHIFT:
+        state.parse.add(state.s0, state.n0)
         state.push()
     elif move == REDUCE:
         state.pop()
-    elif move == RIGHT:
-        state.parse.add(state.s0, state.n0)
-        state.push()
     elif move == LEFT:
+        if state.parse.heads[state.s0]:
+            state.parse.rights[state.stack[-2]].pop()
         state.parse.add(state.n0, state.s0)
         state.pop()
+        if not state.stack and (state.n0 < state.n):
+            state.push()
     else:
         raise StandardError
 
+
+def get_optimal(valid, state, gold):
+    if gold.heads[state.n0] == state.s0:
+        return [SHIFT]
+    elif gold.heads[state.s0] == state.n0:
+        return [LEFT]
+    n0h = gold.heads[state.n0]
+    s0h = gold.heads[state.s0]
+    stack = set(state.stack)
+    n0_l = [w for w in gold.lefts[state.n0][2:] if w in stack]
+    s0_r = [w for w in gold.rights[state.s0][2:] if w > state.n0]
+    
+    moves = []
+    if n0h not in state.stack and not n0_l:
+        moves.append(SHIFT)
+    if not s0_r and not gold.heads[state.s0] > state.n0:
+        if s0h != state.parse.heads[state.s0]:
+            moves.append(LEFT)
+        if s0h != state.n0:
+            moves.append(REDUCE)
+    moves = [m for m in moves if m in valid]
+    if not moves:
+        print state.s0, state.n0
+        print s0h, n0h
+        print n0_l
+        print s0_r
+        raise StandardError
+    return moves
 
 def get_valid(state):
-    invalid = set()
-    if state.n0 >= state.n:
-        invalid.add(SHIFT); invalid.add(RIGHT)
-    if not state.stack:
-        invalid.add(REDUCE); invalid.add(RIGHT); invalid.add(LEFT)
-    elif len(state.stack) == 1:
-        invalid.add(REDUCE)
-    if state.parse.heads[state.s0]:
-        invalid.add(LEFT)
-    else:
-        invalid.add(REDUCE)
-    if len(invalid) == len(MOVES):
-        print state.n0, state.s0, state.n
-        raise StandardError
-    return [m for m in MOVES if m not in invalid]
+    assert state.stack
+    valid = []
 
-
-def get_optimal(moves, i, stack, heads, golds):
-    loss = calculate_loss(i, stack, heads, golds)
-    optimal = []
-    if SHIFT in moves and loss >= shift_loss(i, stack, heads, golds):
-        optimal.append(SHIFT)
-    if REDUCE in moves and loss >= reduce_loss(i, stack, heads, golds):
-        optimal.append(REDUCE)
-    if LEFT in moves and loss >= left_loss(i, stack, heads, golds):
-        optimal.append(LEFT)
-    if RIGHT in moves and loss >= right_loss(i, stack, heads, golds):
-        optimal.append(RIGHT)
-    return optimal
-
-def shift_loss(i, stack, heads, gold):
-    return calculate_loss(i+1, stack + [i], heads, gold)
-
-def reduce_loss(i, stack, heads, gold):
-    return calculate_loss(i, stack[:-1], heads, gold)
-
-def left_loss(i, stack, heads, gold):
-    heads = list(heads)
-    heads[stack[-1]] = i
-    return calculate_loss(i, stack[:-1], heads, gold)
-
-def right_loss(i, stack, heads, gold):
-    heads = list(heads)
-    heads[i] = stack[-1]
-    return calculate_loss(i+1, stack + [i], heads, gold)
-
-
-def calculate_loss(i, stack, heads, gold):
-    loss = 0
-    for child, head in enumerate(gold):
-        if heads[child] == head:
-            continue
-        elif head < i and child < i:
-            loss += 1
-        elif child < i and child not in stack:
-            loss += 1
-        elif head < i and head not in stack:
-            loss += 1
-        elif head in stack and child in stack:
-            loss += 1
-        elif heads[child] != None:
-            loss += 1
-    return loss
-
-
+    if state.n0 < state.n:
+        valid.append(SHIFT)
+    if len(state.stack) >= 2:
+        valid.append(REDUCE)
+    valid.append(LEFT)
+    return valid
 
 class Parser:
     def __init__(self, model_dir):
@@ -152,15 +126,18 @@ class Parser:
         s = State(len(words))
         c = 0
         i = 0
+        #for c, h in enumerate(gold.heads):
+        #    print c, words[c], words[h] if h is not None else '-None-'
+        move_strs = ['S', 'D', 'L']
         while s.stack or s.n0 < s.n:
             features = extract_features(words, gold_tags, s)
             scores = self.model.score(features)
             valid_moves = get_valid(s)
-            gold_moves = get_optimal(valid_moves, s.n0, s.stack, s.parse.heads,
-                                     gold.heads)
+            gold_moves = get_optimal(valid_moves, s, gold)
             guess = max(valid_moves, key=lambda move: scores[move])
             best = max(gold_moves, key=lambda move: scores[move])
-            #print i, guess, best, scores[guess], scores[best], len(features)
+            label = '(' + move_strs[guess] + ', ' + move_strs[best] + ')'
+            #print label, ' '.join(words[s] for s in s.stack), '|', words[s.n0]
             #print s.s0, s.n0
             #print s.parse.heads[s.s0], gold.heads[s.s0]
             #print [w for w, h in enumerate(gold.heads) if h == s.s0]
@@ -175,7 +152,7 @@ class Parser:
         total = 0
         for itn in range(nr_iter):
             corr = 0; total = 0
-            random.shuffle(sentences)
+            #random.shuffle(sentences)
             for words, gold_tags, gold_parse in sentences:
                 corr += self.train_one(itn, words, gold_tags, gold_parse)
                 #self.tagger.train_one(words[1:], gold_tags[1:])

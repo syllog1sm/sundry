@@ -7,102 +7,98 @@ from os import path
 import time
 
 
-class Parse(object):
-    def __init__(self, n):
-        self.heads = [None] * (n + 1)
-        self.lefts = []
-        self.rights = []
-        # Pad these, for easy look up
-        for i in range(n+1):
-            self.lefts.append([0, 0])
-            self.rights.append([0, 0])
-        self.labels = [None] * (n + 1)
+SHIFT = 0; REDUCE = 1; LEFT = 2;
+MOVES = (SHIFT, REDUCE, LEFT)
 
-    def add(self, head, child, label=None):
-        self.heads[child] = head
-        if head > child:
-            self.lefts[head].append(child)
-        else:
-            self.rights[head].append(child)
+
+
+class DefaultList(list):
+    """A list that returns a default value if index out of bounds."""
+    def __init__(self, default=None):
+        self.default = default
+        list.__init__(self)
+
+    def __getitem__(self, index):
+        try:
+            return list.__getitem__(self, index)
+        except IndexError:
+            return self.default
 
 
 class State(object):
     def __init__(self, n):
-        self.i = 2 
-        self.n = n - 1
-        self.stack = [1]
-        self.parse = Parse(n)
-
-    @property
-    def s0(self):
-        return self.stack[-1] if self.stack else 0
-
-    def push(self):
+        self.i = 1 
+        self.n = n
+        self.stack = DefaultList(0)
+        self.heads = [None] * (n-1)
+        self.lefts = []
+        self.rights = []
+        for i in range(n+1):
+            self.lefts.append(DefaultList(0))
+            self.rights.append(DefaultList(0))
         self.stack.append(self.i)
         self.i += 1
 
-    def pop(self):
-        self.stack.pop()
-        if not self.stack and (self.i < self.n):
-            self.push()
-
-    def add(self, head, child):
-        self.heads[child] = head
-        if head > child:
-            self.lefts[head].append(child)
+    def transition(self, move):
+        s0 = self.stack[-1]
+        s1 = self.stack[-2]
+        n0 = self.i
+        if move == SHIFT:
+            self.heads[n0] = s0
+            self.rights[s0].append(n0)
+            self.stack.append(n0)
+            self.i += 1
+        elif move == REDUCE:
+            self.stack.pop()
+        elif move == LEFT:
+            if s1 != 0:
+                self.rights[s1].pop()
+            self.heads[s0] = n0
+            self.lefts[n0].append(s0)
+            self.stack.pop()
         else:
-            self.rights[head].append(child)
+            raise StandardError
+        if not self.stack and (self.i + 1) < self.n:
+            self.stack.append(self.i)
+            self.i += 1
 
+    def context(self):
+        stack = self.stack
+        n0 = self.i
+        s0 = stack[-1]
+        s0l = self.lefts[s0]
+        s0r = self.rights[s0]
+        n0l = self.lefts[self.i]
+        return (stack[-3], self.stack[-2], s0l[-1], s0l[-2], s0, s0r[-2], s0r[-1],
+                n0l[-1], n0l[-2], n0, n0+1, n0+2)
 
-SHIFT = 0; REDUCE = 1; LEFT = 2;
-MOVES = [SHIFT, REDUCE, LEFT]
-
-
-def transition(state, move):
-    if move == SHIFT:
-        state.parse.add(state.s0, state.i)
-        state.push()
-    elif move == REDUCE:
-        state.pop()
-    elif move == LEFT:
-        if state.parse.heads[state.s0]:
-            state.parse.rights[state.stack[-2]].pop()
-        state.parse.add(state.i, state.s0)
-        state.pop()
-    else:
-        raise StandardError
-
-
-def get_optimal(valid, state, gold):
-    n0 = state.i
-    s0 = state.s0
-    if gold[n0] == s0:
-        return [SHIFT]
-    elif gold[s0] == n0:
-        return [LEFT]
-    invalid = set()
-    if gold[s0] == state.parse.heads[s0]:
-        invalid.add(LEFT)
-    for w in state.stack:
-        if gold[w] == n0 or gold[n0] == w:
+    def oracle(self, gold):
+        n0 = self.i
+        s0 = self.stack[-1]
+        if gold[n0] == s0:
+            return [SHIFT]
+        elif gold[s0] == n0:
+            return [LEFT]
+        invalid = set()
+        if (self.i + 1) == self.n:
             invalid.add(SHIFT)
-            break
-    for w in range(state.i, state.n+1):
-        if gold[w] == s0 or gold[s0] == w:
+        if gold[s0] == self.heads[s0]:
             invalid.add(LEFT)
-            invalid.add(REDUCE)
-    moves = [m for m in valid if m not in invalid]
-    assert moves
-    return moves
+        # If there are any dependencies between n0 and the stack,
+        # pushing n0 will lose them.
+        for w in self.stack[:-1]:
+            if gold[w] == n0 or gold[n0] == w:
+                invalid.add(SHIFT)
+                break
+        # If there are any dependencies between s0 and the buffer, popping
+        # s0 will lose them.
+        for w in range(self.i+1, self.n):
+            if gold[w] == s0 or gold[s0] == w:
+                invalid.add(LEFT)
+                invalid.add(REDUCE)
+                break
+        return [m for m in MOVES if m not in invalid]
 
-def get_valid(state):
-    assert state.stack
-    valid = []
-    if state.i < state.n:
-        valid.append(SHIFT)
-    valid.append(REDUCE)
-    valid.append(LEFT)
-    return valid
 
 class Parser:
     def __init__(self, model_dir):
@@ -110,102 +106,69 @@ class Parser:
         self.tagger = PerceptronTagger(path.join(model_dir, 'tagger'))
     
     def parse(self, words, tags):
-        #tags = [None] + self.tagger.tag(words[1:])
         state = State(len(words))
-        while state.stack or state.i < state.n:
+        while state.stack or (state.i + 1) < state.n:
             features = extract_features(words, tags, state)
             scores = self.model.score(features)
-            valid_moves = get_valid(state)
-            guess = max(valid_moves, key=lambda move: scores[move])
-            transition(state, guess)
-        return tags, state.parse.heads
+            moves = MOVES if (state.i + 1) < state.n else [LEFT, REDUCE]
+            guess = max(moves, key=lambda move: scores[move])
+            state.transition(guess)
+        return tags, state.heads
 
-    def train_one(self, itn, words, gold_tags, gold):
-        #tags = [None] + self.tagger.tag(words[1:])
+    def train_one(self, itn, words, gold_tags, gold_heads):
         s = State(len(words))
         c = 0
-        i = 0
-        #for c, h in enumerate(gold.heads):
-        #    print c, words[c], words[h] if h is not None else '-None-'
-        move_strs = ['S', 'D', 'L']
-        while s.stack or s.i < s.n:
+        while s.stack or (s.i + 1) < s.n:
             features = extract_features(words, gold_tags, s)
             scores = self.model.score(features)
-            valid_moves = get_valid(s)
-            gold_moves = get_optimal(valid_moves, s, gold.heads)
-            guess = max(valid_moves, key=lambda move: scores[move])
+            moves = MOVES if (s.i + 1) < s.n else [LEFT, REDUCE]
+            gold_moves = s.oracle(gold_heads)
+            guess = max(moves, key=lambda move: scores[move])
             best = max(gold_moves, key=lambda move: scores[move])
-            label = '(' + move_strs[guess] + ', ' + move_strs[best] + ')'
-            #print label, ' '.join(words[s] for s in s.stack), '|', words[s.n0]
-            #print s.s0, s.n0
-            #print s.parse.heads[s.s0], gold.heads[s.s0]
-            #print [w for w, h in enumerate(gold.heads) if h == s.s0]
-            i += 1
             self.model.update(best, guess, features)
-            transition(s, guess)
+            s.transition(guess)
             c += guess == best
         return c
 
     def train(self, sentences, nr_iter=15):
-        #self.tagger.start_training([(words, tags) for (words, tags, _) in sentences])
         total = 0
         for itn in range(nr_iter):
             corr = 0; total = 0
-            #random.shuffle(sentences)
-            for words, gold_tags, gold_parse in sentences:
+            random.shuffle(sentences)
+            for words, gold_tags, gold_parse, gold_label in sentences:
                 corr += self.train_one(itn, words, gold_tags, gold_parse)
-                #self.tagger.train_one(words[1:], gold_tags[1:])
-                total += (len(words) - 2) * 2
+                total += (len(words) - 3) * 2
             print corr, total, float(corr) / float(total) 
-        #self.tagger.end_training()
         self.model.average_weights()
 
 
 def extract_features(words, tags, state):
     features = {}
     # Setup
-    heads = state.parse.heads; lefts = state.parse.lefts; rights = state.parse.rights
-    n0 = state.i; s0 = state.s0; length = state.n
-    # We need to pick out the context tokens we'll be dealing with, and also
-    # the pieces we'll be constructing features from. We mustn't get these
-    # confused!!
-    # To help, there's a convention: properties that can be part of features start
-    # with upper-case; token indices start with lower-case.
-    #
-    # An argument of add() that starts lower-case is a bug!!
-    # An array index that starts upper-case is a bug!!
-    #
-    n1 = (n0 + 1) if (n0 + 1) < length else 0 
-    n2 = (n0 + 2) if (n0 + 2) < length else 0
-    s0h = heads[s0] if heads[s0] is not None else 0
-    s0h2 = heads[s0h] if heads[s0h] is not None else 0
-    # Tokens of s0 and n0's subtrees.
-    n0L1 = lefts[n0][-1]; n0L2 = lefts[n0][-2]
-    s0L1 = lefts[s0][-1]; s0L2 = lefts[s0][-2]
-    s0R1 = rights[s0][-1]; s0R2 = rights[s0][-2]
+    s2, s1, s0L1, s0L2, s0, s0R1, s0R2, n0L1, n0L2, n0, n1, n2 = state.context()
     # Word features for the above token indices
     Wn0 = words[n0]; Wn1 = words[n1]; Wn2 = words[n2]
-    Ws0 = words[s0]; Ws0h = words[s0h]; Ws0h2 = words[s0h2]
+    Ws0 = words[s0]; Ws1 = words[s1]; Ws2 = words[s2]
     Wn0L1 = words[n0L1]; Wn0L2 = words[n0L2]
     Ws0L1 = words[s0L1]; Ws0L2 = words[s0L2]
     Ws0R1 = words[s0R1]; Ws0R2 = words[s0R2]
     # Part-of-speech tag features
     Tn0 = tags[n0]; Tn1 = tags[n1]; Tn2 = tags[n2]
-    Ts0 = tags[s0]; Ts0h = tags[s0h]; Ts0h2 = tags[s0h2]
+    Ts0 = tags[s0]; Ts1 = tags[s1]; Ts2 = tags[s2]
     Tn0L1 = tags[n0L1]; Tn0L2 = tags[n0L2]
     Ts0L1 = tags[s0L1]; Ts0L2 = tags[s0L2]
     Ts0R1 = tags[s0R1]; Ts0R2 = tags[s0R2]
     # Cap numeric features at 5 
     # Valency (number of children) features
-    Vn0L = len(lefts[n0]) - 2
-    Vs0L = len(lefts[s0]) - 2
-    Vs0R = len(rights[s0]) - 2
+    Vn0L = len(state.lefts[n0])
+    Vs0L = len(state.lefts[s0])
+    Vs0R = len(state.rights[s0])
     # String-distance
     Ds0n0 = min((n0 - s0, 5)) if s0 != 0 else 0
 
     features['bias'] = 1
-    w = (Wn0, Wn1, Wn2, Ws0, Ws0h, Ws0h2, Wn0L1, Wn0L2, Ws0L1, Ws0L2, Ws0R1, Ws0R2)
-    t = (Tn0, Tn1, Tn2, Ts0, Ts0h, Ts0h2, Tn0L1, Tn0L2, Ts0L1, Ts0L2, Ts0R1, Ts0R2)
+    w = (Wn0, Wn1, Wn2, Ws0, Ws1, Ws2, Wn0L1, Wn0L2, Ws0L1, Ws0L2, Ws0R1, Ws0R2)
+    t = (Tn0, Tn1, Tn2, Ts0, Ts1, Ts2, Tn0L1, Tn0L2, Ts0L1, Ts0L2, Ts0R1, Ts0R2)
     for code, templates in zip(('w', 't'), (w, t)):
         for i, value in enumerate(templates):
             if value:
@@ -224,10 +187,10 @@ def extract_features(words, tags, state):
     features['tt s0=%s n0=%s' % (Ts0, Tn0)] = 1
     features['tt n0=%s n1=%s' % (Tn0, Tn1)] = 1
 
-    trigrams = ((Tn0, Tn1, Tn2), (Ts0, Tn0, Tn1), (Ts0, Ts0h, Tn0), 
+    trigrams = ((Tn0, Tn1, Tn2), (Ts0, Tn0, Tn1), (Ts0, Ts1, Tn0), 
                 (Ts0, Ts0L1, Tn0), (Ts0, Ts0R1, Tn0), (Ts0, Tn0, Tn0L1),
                 (Ts0, Ts0L1, Ts0L2), (Ts0, Ts0R1, Ts0R2), (Tn0, Tn0L1, Tn0L2),
-                (Ts0, Ts0h, Ts0h2))
+                (Ts0, Ts1, Ts1))
     for i, (t1, t2, t3) in enumerate(trigrams):
         if t1 or t2 or t3:
             features['ttt-%d %s %s %s' % (i, t1, t2, t3)] = 1
@@ -244,8 +207,9 @@ def extract_features(words, tags, state):
 def read_conll(loc):
     for sent_str in open(loc).read().strip().split('\n\n'):
         lines = [line.split() for line in sent_str.split('\n')]
-        words = ['']; tags = ['']
-        parse = Parse(len(lines) + 1)
+        words = DefaultList(''); tags = DefaultList('')
+        words.append('<start>'); tags.append('<start>')
+        heads = [None]; labels = [None]
         for i, (word, pos, head, label) in enumerate(lines):
             if '-' in word and word[0] != '-':
                 word = '!HYPHEN'
@@ -257,11 +221,11 @@ def read_conll(loc):
                 word = word.lower()
             words.append(intern(word))
             tags.append(intern(pos))
-            parse.add(int(head) + 1 if head != '-1' else len(lines) + 1, i + 1,
-                      label=label)
+            heads.append(int(head) + 1 if head != '-1' else len(lines) + 1)
+            labels.append(label)
         words.append('ROOT'); tags.append('ROOT')
-        assert not [w for w in parse.heads[1:-1] if w is None]
-        yield words, tags, parse
+        heads.append(None); labels.append(None)
+        yield words, tags, heads, labels
 
         
 def main(model_dir, train_loc, heldout_loc):
@@ -274,12 +238,12 @@ def main(model_dir, train_loc, heldout_loc):
     c = 0
     t = 0
     t1 = time.time()
-    for words, gold_tags, gold_parse in read_conll(heldout_loc):
+    for words, gold_tags, gold_heads, gold_labels in read_conll(heldout_loc):
         tags, heads = parser.parse(words, gold_tags)
-        for i, w in list(enumerate(words))[1:]:
-            if gold_parse.labels[i] in ('P', 'punct'):
+        for i, w in list(enumerate(words))[1:-1]:
+            if gold_labels[i] in ('P', 'punct'):
                 continue
-            if heads[i] == gold_parse.heads[i]:
+            if heads[i] == gold_heads[i]:
                 c += 1
             t += 1
     t2 = time.time()

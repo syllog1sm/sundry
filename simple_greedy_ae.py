@@ -28,7 +28,7 @@ class Parse(object):
 
 class State(object):
     def __init__(self, n):
-        self.n0 = 2 
+        self.i = 2 
         self.n = n - 1
         self.stack = [1]
         self.parse = Parse(n)
@@ -38,11 +38,20 @@ class State(object):
         return self.stack[-1] if self.stack else 0
 
     def push(self):
-        self.stack.append(self.n0)
-        self.n0 += 1
+        self.stack.append(self.i)
+        self.i += 1
 
     def pop(self):
         self.stack.pop()
+        if not self.stack and (self.i < self.n):
+            self.push()
+
+    def add(self, head, child):
+        self.heads[child] = head
+        if head > child:
+            self.lefts[head].append(child)
+        else:
+            self.rights[head].append(child)
 
 
 SHIFT = 0; REDUCE = 1; LEFT = 2;
@@ -51,57 +60,47 @@ MOVES = [SHIFT, REDUCE, LEFT]
 
 def transition(state, move):
     if move == SHIFT:
-        state.parse.add(state.s0, state.n0)
+        state.parse.add(state.s0, state.i)
         state.push()
     elif move == REDUCE:
         state.pop()
     elif move == LEFT:
         if state.parse.heads[state.s0]:
             state.parse.rights[state.stack[-2]].pop()
-        state.parse.add(state.n0, state.s0)
+        state.parse.add(state.i, state.s0)
         state.pop()
-        if not state.stack and (state.n0 < state.n):
-            state.push()
     else:
         raise StandardError
 
 
 def get_optimal(valid, state, gold):
-    if gold.heads[state.n0] == state.s0:
+    n0 = state.i
+    s0 = state.s0
+    if gold[n0] == s0:
         return [SHIFT]
-    elif gold.heads[state.s0] == state.n0:
+    elif gold[s0] == n0:
         return [LEFT]
-    n0h = gold.heads[state.n0]
-    s0h = gold.heads[state.s0]
-    stack = set(state.stack)
-    n0_l = [w for w in gold.lefts[state.n0][2:] if w in stack]
-    s0_r = [w for w in gold.rights[state.s0][2:] if w > state.n0]
-    
-    moves = []
-    if n0h not in state.stack and not n0_l:
-        moves.append(SHIFT)
-    if not s0_r and not gold.heads[state.s0] > state.n0:
-        if s0h != state.parse.heads[state.s0]:
-            moves.append(LEFT)
-        if s0h != state.n0:
-            moves.append(REDUCE)
-    moves = [m for m in moves if m in valid]
-    if not moves:
-        print state.s0, state.n0
-        print s0h, n0h
-        print n0_l
-        print s0_r
-        raise StandardError
+    invalid = set()
+    if gold[s0] == state.parse.heads[s0]:
+        invalid.add(LEFT)
+    for w in state.stack:
+        if gold[w] == n0 or gold[n0] == w:
+            invalid.add(SHIFT)
+            break
+    for w in range(state.i, state.n+1):
+        if gold[w] == s0 or gold[s0] == w:
+            invalid.add(LEFT)
+            invalid.add(REDUCE)
+    moves = [m for m in valid if m not in invalid]
+    assert moves
     return moves
 
 def get_valid(state):
     assert state.stack
     valid = []
-
-    if state.n0 < state.n:
+    if state.i < state.n:
         valid.append(SHIFT)
-    if len(state.stack) >= 2:
-        valid.append(REDUCE)
+    valid.append(REDUCE)
     valid.append(LEFT)
     return valid
 
@@ -113,7 +112,7 @@ class Parser:
     def parse(self, words, tags):
         #tags = [None] + self.tagger.tag(words[1:])
         state = State(len(words))
-        while state.stack or state.n0 < state.n:
+        while state.stack or state.i < state.n:
             features = extract_features(words, tags, state)
             scores = self.model.score(features)
             valid_moves = get_valid(state)
@@ -129,11 +128,11 @@ class Parser:
         #for c, h in enumerate(gold.heads):
         #    print c, words[c], words[h] if h is not None else '-None-'
         move_strs = ['S', 'D', 'L']
-        while s.stack or s.n0 < s.n:
+        while s.stack or s.i < s.n:
             features = extract_features(words, gold_tags, s)
             scores = self.model.score(features)
             valid_moves = get_valid(s)
-            gold_moves = get_optimal(valid_moves, s, gold)
+            gold_moves = get_optimal(valid_moves, s, gold.heads)
             guess = max(valid_moves, key=lambda move: scores[move])
             best = max(gold_moves, key=lambda move: scores[move])
             label = '(' + move_strs[guess] + ', ' + move_strs[best] + ')'
@@ -166,7 +165,7 @@ def extract_features(words, tags, state):
     features = {}
     # Setup
     heads = state.parse.heads; lefts = state.parse.lefts; rights = state.parse.rights
-    n0 = state.n0; s0 = state.s0; length = state.n
+    n0 = state.i; s0 = state.s0; length = state.n
     # We need to pick out the context tokens we'll be dealing with, and also
     # the pieces we'll be constructing features from. We mustn't get these
     # confused!!
@@ -203,19 +202,10 @@ def extract_features(words, tags, state):
     Vs0R = len(rights[s0]) - 2
     # String-distance
     Ds0n0 = min((n0 - s0, 5)) if s0 != 0 else 0
-    Bs0h = '1' if s0h else ''
-    Bs0h2 = '1' if s0h2 else ''
-    Bs0R1 = '1' if s0R1 else ''
-    Bs0R2 = '1' if s0R2 else ''
-    Bs0L1 = '1' if s0L1 else ''
-    Bs0L2 = '1' if s0L2 else ''
-    Bn0L1 = '1' if n0L1 else ''
-    Bn0L2 = '1' if n0L2 else ''
 
     features['bias'] = 1
     w = (Wn0, Wn1, Wn2, Ws0, Ws0h, Ws0h2, Wn0L1, Wn0L2, Ws0L1, Ws0L2, Ws0R1, Ws0R2)
     t = (Tn0, Tn1, Tn2, Ts0, Ts0h, Ts0h2, Tn0L1, Tn0L2, Ts0L1, Ts0L2, Ts0R1, Ts0R2)
-    b = (Bs0h, Bs0h2, Bs0R1, Bs0R2, Bs0L1, Bs0L2, Bn0L1, Bn0L2)
     for code, templates in zip(('w', 't'), (w, t)):
         for i, value in enumerate(templates):
             if value:
@@ -248,11 +238,6 @@ def extract_features(words, tags, state):
     for i, (w_t, v_d) in enumerate(vw + vt + d):
         if w_t or v_d:
             features['val/d-%d %s %d' % (i, w_t, v_d)] = 1
-    #labels = ((Ws0, Bs0R1, Bs0R2), (Ts0, Bs0R1, Bs0R2), (Ws0, Bs0L1, Bs0L2),
-    #         (Ts0, Bs0L1, Bs0L2), (Wn0, Bn0L1, Bn0L2), (Tn0, Bn0L1, Bn0L2))
-    #for i, (w_t, l1, l2) in enumerate(labels):
-    #    if w_t or l1 or l2:
-    #        features['label-%d %s %s %s' % (i, w_t, l1, l2)] = 1
     return features
 
 

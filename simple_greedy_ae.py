@@ -257,7 +257,7 @@ def main(model_dir, train_loc, heldout_in, heldout_gold):
 
     input_sents = list(read_pos(heldout_in))
     parser = Parser(model_dir)
-    sentences = list(read_conll(train_loc))[:5000]
+    sentences = list(read_conll(train_loc))
     parser.train(sentences, nr_iter=15)
     parser.model.save('/tmp/parser.pickle')
     c = 0

@@ -40,6 +40,7 @@ class State(object):
         self.i += 1
 
     def transition(self, move):
+        assert move in MOVES
         s0 = self.stack[-1]
         s1 = self.stack[-2]
         n0 = self.i
@@ -56,8 +57,6 @@ class State(object):
             self.heads[s0] = n0
             self.lefts[n0].append(s0)
             self.stack.pop()
-        else:
-            raise StandardError
         if not self.stack and (self.i + 1) < self.n:
             self.stack.append(self.i)
             self.i += 1
@@ -208,38 +207,65 @@ def read_conll(loc):
     for sent_str in open(loc).read().strip().split('\n\n'):
         lines = [line.split() for line in sent_str.split('\n')]
         words = DefaultList(''); tags = DefaultList('')
-        words.append('<start>'); tags.append('<start>')
         heads = [None]; labels = [None]
         for i, (word, pos, head, label) in enumerate(lines):
-            if '-' in word and word[0] != '-':
-                word = '!HYPHEN'
-            elif word.isdigit() and len(word) == 4:
-                word = '!YEAR'
-            elif word[0].isdigit():
-                word = '!DIGITS'
-            else:
-                word = word.lower()
-            words.append(intern(word))
+            words.append(intern(normalize(word)))
             tags.append(intern(pos))
             heads.append(int(head) + 1 if head != '-1' else len(lines) + 1)
             labels.append(label)
-        words.append('ROOT'); tags.append('ROOT')
+        pad_tokens(words); pad_tokens(tags)
         heads.append(None); labels.append(None)
         yield words, tags, heads, labels
 
+
+def normalize(word):
+    if '-' in word and word[0] != '-':
+       return '!HYPHEN'
+    elif word.isdigit() and len(word) == 4:
+       return '!YEAR'
+    elif word[0].isdigit():
+       return '!DIGITS'
+    else:
+       return word.lower()
+
+
+def pad_tokens(tokens):
+    tokens.insert(0, '<start>')
+    tokens.append('ROOT')
+
+
+def read_pos(loc):
+    for line in open(loc):
+        if not line.strip():
+            continue
+        words = DefaultList('')
+        tags = DefaultList('')
+        for token in line.split():
+            if not token:
+                continue
+            word, tag = token.rsplit('/', 1)
+            words.append(normalize(word))
+            tags.append(tag)
+        pad_tokens(words); pad_tokens(tags)
+        yield words, tags
+
+
         
-def main(model_dir, train_loc, heldout_loc):
+def main(model_dir, train_loc, heldout_in, heldout_gold):
     if not os.path.exists(model_dir):
         os.mkdir(model_dir)
+
+    input_sents = list(read_pos(heldout_in))
     parser = Parser(model_dir)
     sentences = list(read_conll(train_loc))[:5000]
     parser.train(sentences, nr_iter=15)
     parser.model.save('/tmp/parser.pickle')
     c = 0
     t = 0
+    gold_sents = list(read_conll(heldout_gold))
     t1 = time.time()
-    for words, gold_tags, gold_heads, gold_labels in read_conll(heldout_loc):
-        tags, heads = parser.parse(words, gold_tags)
+    for (words, tags), (_, _, gold_heads, gold_labels) in zip(input_sents, gold_sents):
+        _, heads = parser.parse(words, tags)
         for i, w in list(enumerate(words))[1:-1]:
             if gold_labels[i] in ('P', 'punct'):
                 continue
@@ -255,7 +281,7 @@ if __name__ == '__main__':
     import sys
     import cProfile
     import pstats
-    main(sys.argv[1], sys.argv[2], sys.argv[3])
+    main(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4])
     #cProfile.runctx('main(sys.argv[1], sys.argv[2], sys.argv[3])', globals(),
     #$                locals(), "Profile.prof")
     #s = pstats.Stats("Profile.prof")

@@ -5,11 +5,56 @@ from collections import defaultdict
 import gzip
 import sh
 
+def _clean_dps(text):
+    tok_id = 0
+    tag = '-'
+    metadata = set(['E_S', 'N_S', '+', '[', ']'])
+    edit_depth = 0
+    saw_ip = False
+    words = []
+    excluded_pos = set([',', '.', 'XX'])
+    for word in text.split():
+        if word == 'N_S':
+            return ''
+        if word == '{F':
+            tag = 'F'
+        elif word == '{D':
+            tag = 'D'
+        elif word == '{A':
+            tag = 'A'
+        # Allow conjunction tagged words
+        #elif word == '{C':
+        #    tag = 'C'
+        elif word == '{E':
+            tag = 'E'
+        elif word == '}':
+            tag = '-'
+        elif word == '[':
+            edit_depth += 1
+            saw_ip = False
+        elif word == ']':
+            if not saw_ip and edit_depth >= 1:
+                edit_depth -= 1
+            saw_ip = False
+        elif word == '+':
+            edit_depth -= 1
+            saw_ip = True
+        elif '/' in word:
+            word, pos = word.rsplit('/', 1)
+            if edit_depth == 0 and tag == '-' and pos not in excluded_pos and word[-1] != '-':
+                word = word.lower().replace('-', '')
+                if words and word.startswith("'") or word == "n't":
+                    words[-1] += word
+                else:
+                    words.append(word)
+    return ' '.join(words)
+
+
 def get_dps_sides(tb_dir):
     """Get sentences from a conversation side from the DPS files"""
     dysfl_dir = tb_dir.join('dysfl').join('dps').join('swbd')
     header_re = re.compile(r'=====+')
-    speaker_re = re.compile(r'(Speaker)(\w)')
+    speaker_re = re.compile(r'(Speaker)(\w)(\d+)')
     turn_re = re.compile(r'\n *\n')
     sides = defaultdict(list)
     for subdir in ['2', '3', '4']:
@@ -21,14 +66,17 @@ def get_dps_sides(tb_dir):
             header, text = header_re.split(text)
             for turn in turn_re.split(text.strip()):
                 lines = turn.strip().split('\n')
-                speaker = speaker_re.match(lines.pop(0)).group(2)
+                _, speaker, turn_num = speaker_re.match(lines.pop(0)).groups()
                 sents = [get_words(line) for line in lines]
                 sents = [sent for sent in sents if sent]
                 #sides[name + speaker].extend(sents)
                 unsegmented = ' '.join(sents)
+                clean = [_clean_dps(line) for line in lines]
+                clean = ' '.join(c for c in clean if c)
                 if unsegmented:
-                    sides[name + speaker].append(unsegmented)
+                    sides[name + speaker].append((int(turn_num), unsegmented, clean))
     return sides
+
 
 def get_words(line):
     excluded_tags = set([',', '.'])
@@ -101,7 +149,7 @@ def align_to_ref(sausage, refs):
     tmp_ref = '/tmp/ref'
     tmp_align = '/tmp/align'
     open(tmp_saus, 'w').write(sausage)
-    open(tmp_ref, 'w').write(' '.join(refs))
+    open(tmp_ref, 'w').write(' '.join(sent for name, sent, clean in refs))
     result = sh.lattice_tool('-in-lattice', tmp_saus, '-read-mesh', '-write-mesh',
                              tmp_align, '-ref-file', tmp_ref)
     pieces = result.split()
@@ -117,8 +165,8 @@ def cut_sausages(aligned, sbd):
     sausage_lines.pop(0)
     sausage_lines.pop(0)
     new_lines = []
-    sent_id = 0
-    sent = sbd.pop(0).split()
+    sent_code, sent, cleaned = sbd.pop(0)
+    sent = sent.split()
     orig_sent = list(sent)
     while sausage_lines:
         align_line = sausage_lines.pop(0)
@@ -132,9 +180,8 @@ def cut_sausages(aligned, sbd):
             sbd_word = sent.pop(0)
             assert sbd_word == ref_pieces[-1], '%s vs %s' % (ref_pieces[-1], sbd_word)
             if not sent:
-                yield sent_id, new_lines, orig_sent
+                yield sent_code, new_lines, cleaned
                 new_lines = []
-                sent_id += 1
                 if not sbd and not sausage_lines:
                     break
                 elif not sbd:
@@ -142,12 +189,16 @@ def cut_sausages(aligned, sbd):
                         sausage_lines.pop(0)
                         sausage_lines.pop(0)
                 else:
-                    sent = sbd.pop(0).split()
+                    sent_code, sent, cleaned = sbd.pop(0)
+                    sent = sent.split()
                     orig_sent = list(sent)
 
 def sausage_to_nbest(name, sent_id, lines, out_dir, ref):
     out_dir = Path(out_dir)
-    sausage_loc = out_dir.join('%s~%s' % (name, sent_id))
+    for subdir in ('nbest', 'scores', 'unscored', 'refs', 'raw'):
+        if not out_dir.join(subdir).exists():
+            out_dir.join(subdir).mkdir()
+    sausage_loc = out_dir.join('raw').join('%s~%s' % (name, sent_id))
     with sausage_loc.open('w') as out_file:
         out_file.write(u'name %s~%s\n' % (name, sent_id))
         out_file.write(u'numaligns %d\n' % (len(lines) / 2))
@@ -167,28 +218,52 @@ def sausage_to_nbest(name, sent_id, lines, out_dir, ref):
                     '-out-nbest-dir', str(out_dir.join('unscored')),
                     '-out-nbest-dir-xscore1', out_dir.join('scores'),
                     '-ref-list', ref_loc, 
-                    '-nbest-decode', 100)
-    err_lines = sh.nbest_lattice('-nbest', out_dir.join('unscored').join('%s~%s.gz' % (name, sent_id)),
-                     '-reference', '<s> %s </s>' % ref,
-                     '-dump-errors').strip()
+                    '-nbest-decode', 2)
     nbest = gzip.open(str(out_dir.join('unscored').join('%s~%s.gz' % (name, sent_id)))).read()
     scores = gzip.open(str(out_dir.join('scores').join('%s~%s.gz' % (name, sent_id)))).read()
-    output = [ref]
-    n = len(ref.split())
+    ref = ref.split()
+    output = [' '.join(ref)]
+    n = len(ref)
     best_err = n
-    for sent, score, err_line in zip(nbest.split('\n'), scores.split('\n'), err_lines.split('\n')):
+    nbest_lines = nbest.strip().split('\n')
+    scores_lines = scores.strip().split('\n')
+    assert len(nbest_lines) == len(scores_lines)
+    for sent, score in zip(nbest_lines, scores_lines):
         pieces = sent.split()
-        words = pieces[2:]
+        words = pieces[4:-1]
+        wer = levenshtein(ref, words)
         words.insert(0, score)
-        wer = err_line.split()[0]
-        words.insert(0, wer)
+        words.insert(0, str(wer))
         output.append(u' '.join(words))
-        if int(wer) < best_err:
-            best_err = int(wer)
-    out_loc = out_dir.join('nbest').join('%s~%s.nbest' % (name, sent_id))
+        if wer < best_err:
+            best_err = wer
+    out_loc = out_dir.join('nbest').join('%s~%s' % (name, sent_id))
     out_loc.open('w').write(u'\n'.join(output))
     return best_err, n
 
+
+def levenshtein(s1, s2):
+    if s1 == s2:
+        return 0
+    if len(s1) == 0:
+        return len(s2)
+    if len(s2) == 0:
+        return len(s1)
+ 
+    previous_row = xrange(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            # j+1 instead of j since previous_row and current_row are one
+            # character longer than s2
+            insertions = previous_row[j + 1] + 1
+
+            #deletions = current_row[j] + 1       
+            deletions = current_row[j]
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
 
 def main(sausage_dir, ptb_dir, out_dir):
     """
@@ -202,9 +277,6 @@ def main(sausage_dir, ptb_dir, out_dir):
     out_dir = Path(out_dir)
     if not out_dir.exists():
         out_dir.mkdir()
-    for subdir in ('nbest', 'scores', 'unscored', 'refs'):
-        if not out_dir.join(subdir).exists():
-            out_dir.join(subdir).mkdir()
     reference = get_dps_sides(Path(ptb_dir))
     n = 0
     wer = 0
@@ -216,12 +288,18 @@ def main(sausage_dir, ptb_dir, out_dir):
         print name
         single_side_a = merge_sausages(name, side_files_a)
         single_side_b = merge_sausages(name, side_files_b)
+        conv_dir = out_dir.join(name)
+        if not conv_dir.exists():
+            conv_dir.mkdir()
         for side_sausage, side_ref, speaker in choose_sides(single_side_a, single_side_b,
-                                                   reference[name + 'A'],
-                                                   reference[name + 'B']):
+                                                            reference[name + 'A'],
+                                                            reference[name + 'B']):
+            side_dir = conv_dir.join(speaker)
+            if not side_dir.exists():
+                side_dir.mkdir()
             for id_, sent_sausage, ref in cut_sausages(side_sausage, side_ref):
                 this_wer, this_n = sausage_to_nbest(name + speaker, id_, sent_sausage,
-                                                    out_dir, u' '.join(ref))
+                                                    side_dir, ref)
                 n += this_n
                 wer += this_wer
         print wer, n, float(wer) / n

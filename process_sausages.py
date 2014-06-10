@@ -42,7 +42,8 @@ def _clean_dps(text):
         elif '/' in word:
             word, pos = word.rsplit('/', 1)
             if edit_depth == 0 and tag == '-' and pos not in excluded_pos and word[-1] != '-':
-                word = word.lower().replace('-', '')
+                word = word.lower()
+                #word = word.lower().replace('-', '')
                 if words and word.startswith("'") or word == "n't":
                     words[-1] += word
                 else:
@@ -79,7 +80,7 @@ def get_dps_sides(tb_dir):
 
 
 def get_words(line):
-    excluded_tags = set([',', '.'])
+    excluded_tags = set([',', '.', ':', '#', '$', '"', '``', '(', ')', 'XX'])
     pieces = line.split()
     words = []
     for piece in pieces:
@@ -90,7 +91,11 @@ def get_words(line):
             continue
         if word.endswith('-'):
             continue
-        word = word.lower().replace('-', '')
+        if word in excluded_tags:
+            continue
+        word = word.lower()
+        if word == 'uhhuh':
+            word = 'uh-huh'
         if words and (word.startswith("'") or word == "n't"):
             words[-1] += word
         else:
@@ -121,6 +126,8 @@ def merge_sausages(name, side_files):
         lines.pop(0)
         lines.pop(0)
         for line in lines:
+            # Make some small fixes
+            line = line.replace('uhhuh', 'uh-huh')
             pieces = line.split()
             pieces.pop(1)
             pieces.insert(1, str(n_align))
@@ -149,7 +156,7 @@ def align_to_ref(sausage, refs):
     tmp_ref = '/tmp/ref'
     tmp_align = '/tmp/align'
     open(tmp_saus, 'w').write(sausage)
-    open(tmp_ref, 'w').write(' '.join(sent for name, sent, clean in refs))
+    open(tmp_ref, 'w').write('<s> ' + ' '.join(sent for name, sent, clean in refs) + ' </s>')
     result = sh.lattice_tool('-in-lattice', tmp_saus, '-read-mesh', '-write-mesh',
                              tmp_align, '-ref-file', tmp_ref)
     pieces = result.split()
@@ -164,6 +171,11 @@ def cut_sausages(aligned, sbd):
     sausage_lines.pop(0)
     sausage_lines.pop(0)
     sausage_lines.pop(0)
+    # Pop the <s> and </s> tokens
+    sausage_lines.pop(0)
+    sausage_lines.pop(0)
+    sausage_lines.pop()
+    sausage_lines.pop()
     new_lines = []
     sent_code, sent, cleaned = sbd.pop(0)
     sent = sent.split()
@@ -171,6 +183,7 @@ def cut_sausages(aligned, sbd):
     while sausage_lines:
         align_line = sausage_lines.pop(0)
         ref_line = sausage_lines.pop(0)
+        assert ',' not in ref_line
         assert align_line.startswith('align')
         assert ref_line.startswith('reference')
         ref_pieces = ref_line.strip().split()
@@ -218,7 +231,7 @@ def sausage_to_nbest(name, sent_id, lines, out_dir, ref):
                     '-out-nbest-dir', str(out_dir.join('unscored')),
                     '-out-nbest-dir-xscore1', out_dir.join('scores'),
                     '-ref-list', ref_loc, 
-                    '-nbest-decode', 2)
+                    '-nbest-decode', 5)
     nbest = gzip.open(str(out_dir.join('unscored').join('%s~%s.gz' % (name, sent_id)))).read()
     scores = gzip.open(str(out_dir.join('scores').join('%s~%s.gz' % (name, sent_id)))).read()
     ref = ref.split()
